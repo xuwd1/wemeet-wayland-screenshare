@@ -29,14 +29,11 @@
 yay -S wemeet-bin  
 ```
 
-2. 安装`pipewire-media-session`和其他依赖
+2. 安装依赖
 
 ```bash
-sudo pacman -S pipewire-media-session
 sudo pacman -S libportal xdg-desktop-portal xdg-desktop-portal-kde xwaylandvideobridge xdotool opencv
 ```
-
-- 注意：如果你已经安装了`wireplumber`，pacman会提示你卸载`wireplumber`. 本项目当前必须需要`pipewire-media-session`才可正常运作. 一般情况下，你可以无痛地按下`y`将`wireplumber`替换为`pipewire-media-session`. 关于此问题具体的implication，还请自行查阅相关资料.
 
 3. 编译本项目:
 
@@ -126,8 +123,9 @@ yay -S wemeet-wayland-screenshare-git
 ### 兼容性和稳定性类 (High priority)
 
 
-1. 本项目目前只在**EndeavourOS ArchLinux KDE Wayland**环境下在多个机器测试过. 其余环境下能否使用未知（GNOME目前尚未测试，但认为几乎没有希望），并且：
-   - 已知该项目**必须需要`pipewire-media-session`才可正常运作**. 使用`wireplumber`替换`pipewire-media-session`一定会使得pipewire的录屏stream无法运行(对应`payload.hpp`中的`PipewireScreenCast`). 目前本人没有找到解决方案，如果你知道该如何解决，请不吝赐教！
+1. 本项目目前只在以下环境下测试过：
+   - **EndeavourOS ArchLinux KDE Wayland** + `pipewire-media-session` 正常工作
+   - GNOME 43 + `wireplumber` 正常工作
 
 2. 目前，本项目只基于AUR package [wemeet-bin](https://aur.archlinux.org/packages/wemeet-bin)测试过. 特别地，在纯Wayland模式下（使用`wemeet`启动），wemeet本身存在一个恶性bug：尽管搭配本项目时，Linux用户可以将屏幕共享给其他用户，但当其他用户发起屏幕共享时，wemeet则会直接崩溃. 因此，本项目推荐启动X11模式的wemeet（使用`wemeet-x11`启动）.
 

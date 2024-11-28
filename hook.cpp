@@ -89,7 +89,7 @@ void XShmAttachHook(){
   }
   fprintf(stderr, "%s", green_text("[hook SYNC] pipewire_fd acquired: " + std::to_string(interface_singleton.portal_handle.load()->pipewire_fd.load()) + "\n").c_str());
 
-  interface_singleton.pipewire_handle = new PipewireScreenCast(interface_singleton.portal_handle.load()->pipewire_fd.load());
+  interface_singleton.pipewire_handle = new PipewireScreenCast(interface_singleton.portal_handle.load()->pipewire_fd.load(), interface_singleton.portal_handle.load()->pipewire_node_ids.at(0));
   fprintf(stderr, "%s", green_text("[hook SYNC] pipewire screencast object allocated\n").c_str());
   
   payload_thread.detach();

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdio>
 #include <chrono>
+#include <vector>
 
 #include <glib-2.0/glib.h>
 #include <glib-2.0/gio/gio.h>
@@ -11,8 +12,8 @@
 #include <memory>
 #include <pipewire-0.3/pipewire/pipewire.h>
 #include <spa/param/video/format-utils.h>
-#include <spa/param/tag-utils.h>
 #include <spa/debug/pod.h>
+#include <spa/utils/dict.h>
 
 #include "format.hpp"
 #include "interface.hpp"
@@ -63,6 +64,7 @@ struct XdpScreencastPortal {
   std::atomic<XdpSession*> session{nullptr};
   std::atomic<int> pipewire_fd{-1};
   std::atomic<XdpScreencastPortalStatus> status{XdpScreencastPortalStatus::kInit};
+  std::vector<unsigned> pipewire_node_ids{};
 
   static void screencast_session_create_cb(
     GObject* source_object,
@@ -80,7 +82,7 @@ struct XdpScreencastPortal {
       g_print("Failed to create screencast session: %s\n", error->message);
       return; //TODO: handle error
     }
-    
+
   }
 
   static void screencast_session_start_cb(
@@ -98,6 +100,17 @@ struct XdpScreencastPortal {
     }
     this_ptr->status.store(XdpScreencastPortalStatus::kRunning, std::memory_order_release);
     this_ptr->pipewire_fd = xdp_session_open_pipewire_remote(XDP_SESSION(source_object));
+
+    // get pipewire node ids
+    // there is only one id as XDP_SCREENCAST_FLAG_NONE is chosen
+    GVariant *streams = xdp_session_get_streams(XDP_SESSION(source_object));
+    GVariantIter *iter = g_variant_iter_new(streams);
+    unsigned node_id;
+    while (g_variant_iter_next(iter, "(ua{sv})", &node_id, NULL)) {
+      this_ptr->pipewire_node_ids.push_back(node_id);
+      fprintf(stderr, "[hook] stream %d\n", node_id);
+    }
+    g_variant_iter_free(iter);
   }
   
 };
@@ -107,22 +120,27 @@ struct XdpScreencastPortal {
 struct PipewireScreenCast {
   using THIS_CLASS = PipewireScreenCast;
 
-  PipewireScreenCast(int pw_fd, double target_framerate = 20.0, uint64_t reporting_interval = 20):
+  PipewireScreenCast(int pw_fd, int pw_node_id, double target_framerate = 20.0, uint64_t reporting_interval = 20):
+    node_id(pw_node_id),
     target_framerate(target_framerate),
     reporting_interval(reporting_interval),
     processed_frame_count(0)
   {
     reset_last_frame_time();
     pw_init(nullptr, nullptr);
-    struct pw_properties* props = pw_properties_new(PW_KEY_MEDIA_TYPE, "Video",
-                        PW_KEY_MEDIA_CATEGORY, "Capture",
-                        PW_KEY_MEDIA_ROLE, "Camera",
-                        NULL);
     pw_mainloop = pw_main_loop_new(nullptr);
     pw_loop* pw_mainloop_loop = pw_main_loop_get_loop(pw_mainloop);
     context = pw_context_new(pw_mainloop_loop, nullptr, 0);
     core = pw_context_connect_fd(context, pw_fd, nullptr, 0);
-    stream = pw_stream_new(core, "pipewire-portal-screencast", nullptr);
+    registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
+
+    spa_zero(registry_listener);
+    pw_registry_add_listener(registry, &registry_listener, &registry_events, this);
+  }
+
+  void init(const char *serial) {
+    pw_properties *props = pw_properties_new(PW_KEY_TARGET_OBJECT, serial, NULL);
+    stream = pw_stream_new(core, "pipewire-portal-screencast", props);
 
     stream_events = {
       .version = PW_VERSION_STREAM_EVENTS,
@@ -147,11 +165,12 @@ struct PipewireScreenCast {
                 SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
                 SPA_FORMAT_mediaType,       SPA_POD_Id(SPA_MEDIA_TYPE_video),
                 SPA_FORMAT_mediaSubtype,    SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-                SPA_FORMAT_VIDEO_format,    SPA_POD_CHOICE_ENUM_Id(4,
+                SPA_FORMAT_VIDEO_format,    SPA_POD_CHOICE_ENUM_Id(5,
                                                 SPA_VIDEO_FORMAT_RGB,
                                                 SPA_VIDEO_FORMAT_BGR,
                                                 SPA_VIDEO_FORMAT_RGBA,
-                                                SPA_VIDEO_FORMAT_BGRA
+                                                SPA_VIDEO_FORMAT_BGRA,
+                                                SPA_VIDEO_FORMAT_BGRx
                                                 ),
                 SPA_FORMAT_VIDEO_size,      SPA_POD_CHOICE_RANGE_Rectangle(
                                                 &vidsize_default,
@@ -164,6 +183,23 @@ struct PipewireScreenCast {
     
     pw_stream_connect(stream, PW_DIRECTION_INPUT, PW_ID_ANY, pw_stream_flags(PW_STREAM_FLAG_AUTOCONNECT |  PW_STREAM_FLAG_MAP_BUFFERS), params, 1);
   }
+
+  static void registry_global(void *data, uint32_t id, uint32_t permissions, const char *type, uint32_t version, const struct spa_dict *props) {
+    THIS_CLASS *this_ptr = reinterpret_cast<THIS_CLASS *>(data);
+
+    if (id != this_ptr->node_id)
+      return;
+
+    const spa_dict_item *serial = spa_dict_lookup_item(props, PW_KEY_OBJECT_SERIAL);
+    if (!serial || !serial->value) {
+      fprintf(stderr, "%s stream %u has no serial\n", red_text("[hook]").c_str(), id);
+      return;
+    }
+
+    this_ptr->init(serial->value);
+  }
+
+  static constexpr pw_registry_events registry_events{ PW_VERSION_REGISTRY_EVENTS, THIS_CLASS::registry_global };
 
   ~PipewireScreenCast() {
     if (stream) pw_stream_disconnect(stream);
@@ -187,6 +223,9 @@ struct PipewireScreenCast {
   std::atomic<pw_stream*> stream{nullptr}; // need to be freed using pw_stream_destroy
 
 private:
+  int node_id;
+  pw_registry *registry;
+  spa_hook registry_listener;
   std::unique_ptr<uint8_t[]> param_buffer{nullptr};
   static constexpr size_t param_buffer_size = 1024;
   spa_pod_builder b;

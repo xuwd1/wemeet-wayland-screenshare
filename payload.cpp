@@ -4,7 +4,9 @@
 #include <vector>
 #include <algorithm>
 
+extern "C" {
 #include <xdo.h>
+}
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -123,6 +125,7 @@ void x11_sanitizer_main()
   std::chrono::milliseconds STEADY_WAIT_TIME(2000);
   std::chrono::time_point<std::chrono::high_resolution_clock> steady_start_time;
   bool target_first_occurred = false;
+  bool target_managed = false;
   XWindow_t picked_window_id = 0;
 
   while(interface_handle->x11_sanitizer_stop_flag.load(std::memory_order_seq_cst) == false){
@@ -161,21 +164,29 @@ void x11_sanitizer_main()
         fprintf(stderr, "%s", yellow_text("[payload x11 sanitizer] picked window: 0x" + int_to_hexstr(picked_window_id) + "\n").c_str());
       }
       
-      // legacy code
-
-      // xdo_set_window_override_redirect(
-      //   xdo, picked_window_id, 0
-      // );
-      // std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      // xdo_unmap_window(
-      //   xdo, picked_window_id
-      // );
-      // std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      // xdo_map_window(
-      //   xdo, picked_window_id
-      // );
-      // std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      if (!target_managed) {
+        // get it managed by window manager
+        // it is all you need on GNOME
+        xdo_set_window_override_redirect(
+          xdo, picked_window_id, 0
+        );
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        xdo_unmap_window(
+          xdo, picked_window_id
+        );
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // do it only once to get rid of annoying 'wemeetapp is ready' notifications
+        xdo_map_window(
+          xdo, picked_window_id
+        );
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        target_managed = true;
+      }
       
+      // This should be commented if test for KDE turns out good.
+      // It hides the full-screen window indicating sharing area
+      // which does not matter but gives inconsistent user experience.
+      // If this window gets maximized, it will shadow gnome panel.
       constexpr int IMPORTANT_THINGS_WORTH_THREE_REITERATIONS = 3;
       for (int i = 0; i < IMPORTANT_THINGS_WORTH_THREE_REITERATIONS; i++) {
         xdo_minimize_window(
