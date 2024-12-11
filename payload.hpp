@@ -380,16 +380,7 @@ private:
     if (this_ptr->actual_params.param_good){
       auto& interface_singleton = InterfaceSingleton::getSingleton();
       auto& framebuf_queue = interface_singleton.interface_handle.load()->frame_buf_queue;
-      bool write_acquired = false;
-      write_acquired = framebuf_queue.acquire_write();
-
-      // did not acquire the write lock, we just quit and do nothing
-      if (!write_acquired) {
-        goto exit;
-      }
-
-      // write lock acquired, we can write to the frame buffer
-      auto& framebuffer = framebuf_queue.get_write();
+      auto& framebuffer = framebuf_queue.write();
       framebuffer.update_param(
         this_ptr->actual_params.height,
         this_ptr->actual_params.width,
@@ -408,8 +399,8 @@ private:
         memcpy(framebuffer_row_start, pw_chunk_row_start, pw_chunk_stride);
       }
 
-      // copy finished, release the write lock
-      framebuf_queue.release_write();    
+      // copy finished, commit the frame buffer
+      framebuf_queue.commit();
     }
 
     

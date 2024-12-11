@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
-#include <mutex>
+#include <atomic>
 
 #include "format.hpp"
 
@@ -53,9 +53,6 @@ struct FrameBuffer {
 
 };
 
-// TODO: this framebuffer queue is WAY TOO INEFFICIENT right now
-// we have to implement some double buffer'd version of this
-
 struct SimpleZOHSingleFrameBufferQueue{
 
   SimpleZOHSingleFrameBufferQueue(
@@ -63,46 +60,23 @@ struct SimpleZOHSingleFrameBufferQueue{
     uint32_t init_width,
     SpaVideoFormat_e const& init_format
   ){
-    framebuf.update_param(init_height, init_width, init_format);
+    read_index = 0;
+    framebuf[0].update_param(init_height, init_width, init_format);
+    framebuf[1].update_param(init_height, init_width, init_format);
   }
 
-  inline bool try_acquire_write(){
-    return true;
+  inline const FrameBuffer& read() {
+    return framebuf[read_index];
   }
 
-  inline bool acquire_write(){
-    mtx.lock();
-    return true;
+  inline FrameBuffer& write() {
+    return framebuf[read_index ^ 1];
   }
 
-  inline FrameBuffer& get_write(){
-    return framebuf;
+  inline void commit() {
+    read_index ^= 1;
   }
 
-  inline void release_write(){
-    mtx.unlock();
-    return;
-  }
-
-  inline bool try_acquire_read(){
-    return true;
-  }
-
-  inline bool acquire_read(){
-    mtx.lock();
-    return true;
-  }
-
-  inline FrameBuffer& get_read(){
-    return framebuf;
-  }
-
-  inline bool release_read(){
-    mtx.unlock();
-    return true;
-  }
-
-  std::mutex mtx;
-  FrameBuffer framebuf;
-
+  std::atomic<int> read_index;
+  FrameBuffer framebuf[2];
 };

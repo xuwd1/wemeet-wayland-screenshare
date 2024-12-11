@@ -160,11 +160,7 @@ void XShmGetImageHook(XImage& image){
   );
   OpencvDLFCNSingleton::cvSetZero(&ximage_cvmat);
 
-  // critical section begins
-
-  [[maybe_unused]] bool read_acquired = framebuf_queue.acquire_read();
-
-  auto& framebuffer = framebuf_queue.get_read();
+  auto& framebuffer = framebuf_queue.read();
   auto framebuffer_spa_format = framebuffer.format;
   auto framebuffer_width = framebuffer.width;
   auto framebuffer_height = framebuffer.height;
@@ -189,10 +185,6 @@ void XShmGetImageHook(XImage& image){
   OpencvDLFCNSingleton::cvResize(
     &framebuffer_cvmat, &ximage_cvmat_roi, CV_INTER_LINEAR
   );
-
-  framebuf_queue.release_read();
-
-  // critical section ends
 
   // do color convert
   // here the code is currently mainly for wlroot WMs
