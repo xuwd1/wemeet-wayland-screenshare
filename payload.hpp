@@ -347,6 +347,17 @@ private:
     }
     // we gather the actual video stream params here
     this_ptr->actual_params.update_from_pod(param);
+
+    uint8_t params_buffer[1024];
+    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
+    const struct spa_pod *params[1];
+
+    params[0] = (struct spa_pod *)(spa_pod_builder_add_object(&b,
+      SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+      SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoCrop),
+      SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_region))
+    ));
+    pw_stream_update_params(this_ptr->stream.load(), params, 1);
   }
 
   static void on_process(void* data){
@@ -380,9 +391,22 @@ private:
     if (this_ptr->actual_params.param_good){
       auto& interface_singleton = InterfaceSingleton::getSingleton();
       auto& framebuffer = interface_singleton.interface_handle.load()->framebuf;
+
+      struct spa_meta_region *mc;
+      int x = 0, y = 0, width = this_ptr->actual_params.width, height = this_ptr->actual_params.height;
+      if ((mc = (struct spa_meta_region *)spa_buffer_find_meta_data(b->buffer, SPA_META_VideoCrop, sizeof(*mc))) && spa_meta_region_is_valid(mc)) {
+        x = mc->region.position.x;
+        y = mc->region.position.y;
+        width = mc->region.size.width;
+        height = mc->region.size.height;
+        if (this_ptr->processed_frame_count % this_ptr->reporting_interval == 0) {
+          fprintf(stderr, "videocrop: offset=(%d,%d) size=(%d,%d)\n", x, y, width, height);
+        }
+      }
+
       framebuffer.update_param(
-        this_ptr->actual_params.height,
-        this_ptr->actual_params.width,
+        height,
+        width,
         this_ptr->actual_params.format
       );
 
@@ -392,10 +416,10 @@ private:
       uint32_t pw_chunk_offset = b->buffer->datas[0].chunk->offset % b->buffer->datas[0].maxsize;
       pw_chunk_ptr += pw_chunk_offset;
 
-      for (int row_idx = 0; row_idx < framebuffer.height; ++row_idx) {
+      for (int row_idx = 0; row_idx < height; ++row_idx) {
         uint8_t* framebuffer_row_start = framebuffer.data.get() + row_idx * framebuffer.row_byte_stride;
-        uint8_t* pw_chunk_row_start = pw_chunk_ptr + row_idx * pw_chunk_stride;
-        memcpy(framebuffer_row_start, pw_chunk_row_start, pw_chunk_stride);
+        uint8_t* pw_chunk_row_start = pw_chunk_ptr + (row_idx + y) * pw_chunk_stride + x * spa_videoformat_bytesize(this_ptr->actual_params.format);
+        memcpy(framebuffer_row_start, pw_chunk_row_start, width * spa_videoformat_bytesize(this_ptr->actual_params.format));
       }
     }
 
