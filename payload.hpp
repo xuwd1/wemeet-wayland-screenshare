@@ -24,7 +24,7 @@
 enum class DEType {
   GNOME,
   KDE,
-  Hyprland, // Hyprland does not support XDP_CURSOR_MODE_HIDDEN, dang it... 
+  Hyprland, // Hyprland does not support XDP_CURSOR_MODE_HIDDEN, dang it...
   Unknown // possibly wlr or some other magical DE
 };
 
@@ -76,19 +76,38 @@ struct XdpScreencastPortal {
 
   using THIS_CLASS = XdpScreencastPortal;
 
+  struct _XdpPortal {
+    GObject parent_instance;
+
+    GError *init_error;
+    GDBusConnection *bus;
+  };
+
   XdpScreencastPortal() {
     portal = xdp_portal_new();
-    XdpOutputType output_type = (XdpOutputType)(XdpOutputType::XDP_OUTPUT_MONITOR | XdpOutputType::XDP_OUTPUT_WINDOW);
-    XdpScreencastFlags cast_flags = XdpScreencastFlags::XDP_SCREENCAST_FLAG_NONE;
-    XdpCursorMode cursor_mode = get_current_session_type() == SessionType::Wayland ? 
-                                XDP_CURSOR_MODE_EMBEDDED :
-                                XDP_CURSOR_MODE_HIDDEN;
-    
-    // hyprland cursor mode workaround.
-    // as hyprland does not support XDP_CURSOR_MODE_HIDDEN, we simply use XDP_CURSOR_MODE_EMBEDDED for it
-    if (get_current_de_type() == DEType::Hyprland) {
+
+    uint32_t available_cursor_modes = 0;
+    {
+      GDBusConnection *bus = ((_XdpPortal *)portal)->bus;
+      // code from obs-studio
+      g_autoptr(GError) error = NULL;
+      GDBusProxy *screencast_proxy = g_dbus_proxy_new_sync(bus, G_DBUS_PROXY_FLAGS_NONE, NULL,
+                                                           "org.freedesktop.portal.Desktop",
+                                                           "/org/freedesktop/portal/desktop",
+                                                           "org.freedesktop.portal.ScreenCast", NULL, &error);
+      g_autoptr(GVariant) cached_cursor_modes = g_dbus_proxy_get_cached_property(screencast_proxy, "AvailableCursorModes");
+      if (cached_cursor_modes) {
+        available_cursor_modes = g_variant_get_uint32(cached_cursor_modes);
+      }
+      g_clear_object(&screencast_proxy);
+    }
+    XdpCursorMode cursor_mode = XDP_CURSOR_MODE_HIDDEN;
+    if (available_cursor_modes & XDP_CURSOR_MODE_EMBEDDED) {
       cursor_mode = XDP_CURSOR_MODE_EMBEDDED;
     }
+
+    XdpOutputType output_type = (XdpOutputType)(XdpOutputType::XDP_OUTPUT_MONITOR | XdpOutputType::XDP_OUTPUT_WINDOW);
+    XdpScreencastFlags cast_flags = XdpScreencastFlags::XDP_SCREENCAST_FLAG_NONE;
     XdpPersistMode persist_mode = XdpPersistMode::XDP_PERSIST_MODE_NONE;
     xdp_portal_create_screencast_session(
       portal,
@@ -166,7 +185,7 @@ struct XdpScreencastPortal {
     }
     g_variant_iter_free(iter);
   }
-  
+
 };
 
 
@@ -174,7 +193,7 @@ struct XdpScreencastPortal {
 struct PipewireScreenCast {
   using THIS_CLASS = PipewireScreenCast;
 
-  PipewireScreenCast(int pw_fd, int pw_node_id, double target_framerate = 20.0, uint64_t reporting_interval = 20):
+  PipewireScreenCast(int pw_fd, int pw_node_id, uint32_t target_framerate = 30, uint64_t reporting_interval = 20):
     node_id(pw_node_id),
     target_framerate(target_framerate),
     reporting_interval(reporting_interval),
@@ -207,12 +226,12 @@ struct PipewireScreenCast {
     // set up stream params
     this->param_buffer.reset(new uint8_t[param_buffer_size]);
     b = SPA_POD_BUILDER_INIT(param_buffer.get(), param_buffer_size);
-    
+
     auto vidsize_default = SPA_RECTANGLE(320, 240);
     auto vidsize_min = SPA_RECTANGLE(1, 1);
     auto vidsize_max = SPA_RECTANGLE(DEFAULT_FB_ALLOC_WIDTH, DEFAULT_FB_ALLOC_HEIGHT);
-    
-    auto vidframerate_default = SPA_FRACTION(20, 1);
+
+    auto vidframerate_default = SPA_FRACTION(target_framerate, 1);
     auto vidframerate_min = SPA_FRACTION(0, 1);
     auto vidframerate_max = SPA_FRACTION(1000, 1);
     params[0] = reinterpret_cast<spa_pod*>(spa_pod_builder_add_object(&b,
@@ -235,7 +254,7 @@ struct PipewireScreenCast {
                                                 &vidframerate_default,
                                                 &vidframerate_min,
                                                 &vidframerate_max)));
-    
+
     pw_stream_connect(stream, PW_DIRECTION_INPUT, PW_ID_ANY, pw_stream_flags(PW_STREAM_FLAG_AUTOCONNECT |  PW_STREAM_FLAG_MAP_BUFFERS), params, 1);
   }
 
@@ -289,7 +308,7 @@ private:
   pw_stream_events stream_events;
   std::chrono::time_point<std::chrono::high_resolution_clock> last_frame_time;
   int counter{0};
-  double target_framerate;
+  uint32_t target_framerate;
   uint64_t reporting_interval;
   uint64_t processed_frame_count;
 
@@ -300,7 +319,7 @@ private:
     double max_framerate{0.0f};
     SpaVideoFormat_e format{SpaVideoFormat_e::INVALID};
     bool param_good{false};
-    
+
     void update_from_pod(const spa_pod* pod){
       spa_video_info_raw info;
       auto retval = spa_format_video_raw_parse(pod, &info);
@@ -311,14 +330,14 @@ private:
       max_framerate = static_cast<double>(info.max_framerate.num) / static_cast<double>(info.max_framerate.denom);
       format = SpaVideoFormat_e{static_cast<SpaVideoFormat_e>(info.format)};
       param_good = (width > 0) && (height > 0) && (format != SpaVideoFormat_e::INVALID);
-      
+
       std::string reporting_str = "width: " + std::to_string(width) + " | " +
                                   "height: " + std::to_string(height) + " | " +
                                   "framerate: " + std::to_string(framerate) + " | " +
                                   "max_framerate: " + std::to_string(max_framerate) + " | " +
                                   "format: " + spa_to_string(format) + " | " +
                                   "param_good: " + std::to_string(param_good);
-      
+
       fprintf(stderr, "%s", yellow_text("[payload pw] actual params: " + reporting_str + "\n").c_str());
     }
 
@@ -335,9 +354,9 @@ private:
       fprintf(stderr, "%s", red_text("[payload pw] stream error: " + std::string(error_message) + "\n").c_str());
     }
   }
-  
+
   static void on_param_changed(void* data, uint32_t id, const struct spa_pod* param){
-    
+
     THIS_CLASS* this_ptr = reinterpret_cast<THIS_CLASS*>(data);
     this_ptr->reset_last_frame_time();
     std::string param_id_name_str = spa_debug_type_find_name(spa_type_param, id);
@@ -384,7 +403,7 @@ private:
       pw_stream_queue_buffer(this_ptr->stream, b);
       return;
     }
-    
+
     // start processing frame
     this_ptr->processed_frame_count++;
     this_ptr->last_frame_time = cur_frame_time;
@@ -414,7 +433,7 @@ private:
         this_ptr->actual_params.width,
         this_ptr->actual_params.format
       );
-      
+
       struct spa_meta_videotransform *video_transform;
       if ((video_transform = (struct spa_meta_videotransform *)spa_buffer_find_meta_data(b->buffer, SPA_META_VideoTransform, sizeof(*video_transform)))) {
         switch (video_transform->transform) {
@@ -470,7 +489,7 @@ private:
       }
     }
 
-    
+
     exit:
     pw_stream_queue_buffer(this_ptr->stream, b);
     return;

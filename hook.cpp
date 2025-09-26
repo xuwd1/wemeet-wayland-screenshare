@@ -311,4 +311,8 @@ Bool XDamageQueryExtension(Display *dpy, int *event_base_return, int *error_base
   return 0;
 }
 
+XFixesCursorImage *XFixesGetCursorImage (Display *dpy) {
+  return nullptr;
+}
+
 }

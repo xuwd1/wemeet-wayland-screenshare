@@ -4,6 +4,7 @@
 #include <X11/extensions/XShm.h>
 #include <X11/extensions/Xdamage.h>
 #include <X11/extensions/Xcomposite.h>
+#include <X11/extensions/Xfixes.h>
 
 #include <cstdio>
 #include <dlfcn.h>
